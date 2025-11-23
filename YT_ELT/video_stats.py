@@ -1,41 +1,13 @@
-
-# import requests
-# import json
-# import os
-# from dotenv import load_dotenv
-
-# load_dotenv(dotenv_path="./.env")
-# api_key = os.getenv("api_key")
-# channel_name = "MrBeast"
-
-# # The following environment is selected: c:\GIT\.venv\Scripts\python.exe
-
-# def get_playlist_id():
-#     try:
-#         url = f"https://youtube.googleapis.com/youtube/v3/channels?part=contentDetails&forHandle={channel_name}&key={api_key}"
-#         response = requests.get(url=url)
-#         json_response = response.json()
-#         # print(response)
-#         # print(json.dumps(json_response,indent=2))
-#         channel_items = json_response['items'][0]
-#         channel_playlistid = channel_items["contentDetails"]["relatedPlaylists"]["uploads"]
-#         print(channel_playlistid)
-#         return channel_playlistid
-#     except requests.exceptions.RequestException as e:
-#         raise e
-
-# if __name__ == "__main__":
-#     get_playlist_id()
-
-
 import requests
 import json
 import os
 from dotenv import load_dotenv
+from datetime import date
 
 load_dotenv("./.env")
 api_key = os.getenv("api_key")
 channel_name = "@MrBeast"
+maxresults = 50
 
 def get_playlist_id():
     url = f"https://youtube.googleapis.com/youtube/v3/channels?part=contentDetails&forHandle={channel_name}&key={api_key}"
@@ -52,9 +24,84 @@ def get_playlist_id():
     print("Uploads Playlist ID:", playlist_id)
     return playlist_id
 
+def get_video_ids(playlist_id):
+    video_ids = []
+
+    pageToken = None
+    base_url = f"https://youtube.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults={maxresults}&playlistId={playlist_id}&key={api_key}"
+
+    try:
+        while True:
+            url = base_url
+
+            if pageToken:
+                url += f"&pageToken={pageToken}"
+            response = requests.get(url)
+            response.raise_for_status()
+            data = response.json()
+
+            for item in data.get('items',[]):
+                video_id = item['contentDetails']['videoId']
+                video_ids.append(video_id)
+
+            pageToken = data.get('nextPageToken')
+
+            if not pageToken:
+                break
+        return video_ids
+    except requests.exceptions.RequestException as e:
+        raise e
+
+def extracted_video_data(video_ids):
+    extracted_data = []
+
+    def batch_list(video_ids, batch_size):
+        for video_id in range(0,len(video_ids), batch_size):
+            yield video_ids[video_id: video_id + batch_size]
+    try:
+        for batch in batch_list(video_ids, maxresults):
+            video_ids_str = ",".join(batch)
+
+            url = f'https://youtube.googleapis.com/youtube/v3/videos?part=contentDetails&part=snippet&part=statistics&id={video_ids_str}&maxHeight=1&key={api_key}'
+            response = requests.get(url)
+            response.raise_for_status()
+            data = response.json()
+
+            for item in data.get('items',[]):
+                video_id =  item['id']
+                snippet = item['snippet']
+                contentDetails = item['contentDetails']
+                statistics = item['statistics']
+
+                video_data = { 
+                    "video_id":video_id,
+                    "title":snippet['title'],
+                    "publishedAt":snippet['publishedAt'],
+                    "duration":contentDetails['duration'],
+                    "viewCount":statistics.get('viewCount',None),
+                    "likeCount":statistics.get('likeCount',None),
+                    "commentCount":statistics.get('commentCount',None)
+                }
+
+                extracted_data.append(video_data)
+
+            return extracted_data
+
+    except requests.exceptions.RequestException as e:
+        raise e
+
+
+def save_to_json(extracted_data):
+    file_path = f"./data/YT_data_{date.today()}.json"
+    with open (file_path,'w',encoding='utf-8') as json_outfile:
+        json.dump(extracted_data,json_outfile,indent=4, ensure_ascii=False)
+
+
+    
+
 if __name__ == "__main__":
-    get_playlist_id()
-
-
-# print("API KEY LOADED =", api_key)
-# print("LENGTH =", len(api_key))
+    playlist_id = get_playlist_id()
+    video_ids = get_video_ids(playlist_id)
+    video_data = extracted_video_data(video_ids)
+    save_to_json(video_data)
+    
